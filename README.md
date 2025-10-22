@@ -33,6 +33,7 @@ It demonstrates an end-to-end deep-learning pipeline for personalized ranking â€
 
 ```python
 python trainer.py \
+  --data_path PATH/TO/DATASET \
   --batch_size 256 \
   --max_title_len 20 \
   --max_hist_len 50 \
