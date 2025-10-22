@@ -219,10 +219,14 @@ class TinyNewsRec(nn.Module):
     def score(self, user_vec, item_vec):
         return (user_vec * item_vec).sum(dim=-1)
 
-    def info_nce_loss(self, user_vec, pos_item_vec, temperature=0.07):
-        logits = (user_vec @ pos_item_vec.t()) / temperature
-        labels = torch.arange(user_vec.size(0), device=user_vec.device)
+    # In TinyNewsRec
+    def info_nce_loss(self, user_vec, pos_item_vec, temperature=0.3):
+        u = F.normalize(user_vec, dim=-1)
+        v = F.normalize(pos_item_vec, dim=-1)
+        logits = (u @ v.t()) / temperature
+        labels = torch.arange(u.size(0), device=u.device)
         return F.cross_entropy(logits, labels)
+
 
 
 # ------------------------------
@@ -348,18 +352,27 @@ class MindTrainDataset(Dataset):
                 ts = None
             if not isinstance(imps, str):
                 continue
+
             # pick all clicked items (label=1)
             pos = [p.split('-')[0] for p in imps.split() if p.endswith('-1')]
             if len(pos) == 0:
                 continue
+
+            # filter history to items we can encode
             history_ids = [nid for nid in hist.split() if nid in self.news2title]
+            # *** DROP zero-history samples ***
+            if len(history_ids) == 0:
+                continue
+
             # clip to max_hist_len (most recent last)
             history_ids = history_ids[-self.max_hist_len:]
+
             for nid in pos:
                 if nid not in self.news2title:
                     continue
                 rows.append((history_ids, nid, ts))
         self.rows = rows
+
 
     def __len__(self):
         return len(self.rows)
@@ -394,30 +407,55 @@ def collate_train(batch):
     B = len(batch)
 
     hist_title_ids = torch.full((B, max_T, L), PAD_IDX, dtype=torch.long)
-    hist_mask = torch.zeros((B, max_T), dtype=torch.bool)
-    hist_pop = torch.zeros((B, max_T), dtype=torch.float)
-    hist_age = torch.zeros((B, max_T), dtype=torch.float)
+    hist_mask      = torch.zeros((B, max_T), dtype=torch.bool)
+    hist_pop       = torch.zeros((B, max_T), dtype=torch.float)
+    hist_age       = torch.zeros((B, max_T), dtype=torch.float)
 
     pos_title_ids = torch.stack([x['pos_title_ids'] for x in batch])
-    pos_pop = torch.stack([x['pos_pop'] for x in batch])
-    pos_age = torch.stack([x['pos_age'] for x in batch])
+    pos_pop       = torch.stack([x['pos_pop'] for x in batch])
+    pos_age       = torch.stack([x['pos_age'] for x in batch])
 
     for i, x in enumerate(batch):
-        T = x['hist_title_ids'].shape[0]
-        hist_title_ids[i, :T] = x['hist_title_ids']
-        hist_mask[i, :T] = True
-        hist_pop[i, :T] = x['hist_pop']
-        hist_age[i, :T] = x['hist_age']
+        h = x['hist_title_ids']
+        h = torch.as_tensor(h, dtype=torch.long)
+
+        # Ensure 2D shape (T, L) even when T=0 or when a single title is 1D
+        if h.ndim == 1:
+            if h.numel() == 0:
+                h = torch.empty((0, L), dtype=torch.long)
+            else:
+                h = h[:L]
+                if h.numel() < L:
+                    h = torch.cat([h, torch.full((L - h.numel(),), PAD_IDX, dtype=torch.long)])
+                h = h.view(1, L)
+        else:
+            h = h[:, :L]
+            if h.size(1) < L:
+                pad = torch.full((h.size(0), L - h.size(1)), PAD_IDX, dtype=torch.long)
+                h = torch.cat([h, pad], dim=1)
+
+        T = min(h.size(0), max_T)
+
+        if T > 0:
+            hist_title_ids[i, :T] = h[:T]
+            hist_mask[i, :T]      = True
+
+            # hist_pop/age expected to be length T; only assign if T>0
+            hp = torch.as_tensor(x['hist_pop'], dtype=torch.float)
+            ha = torch.as_tensor(x['hist_age'], dtype=torch.float)
+            hist_pop[i, :T] = hp[:T] if hp.ndim == 1 else hp.view(-1)[:T]
+            hist_age[i, :T] = ha[:T] if ha.ndim == 1 else ha.view(-1)[:T]
 
     return {
         'hist_title_ids': hist_title_ids,
-        'hist_mask': hist_mask,
-        'hist_pop': hist_pop,
-        'hist_age': hist_age,
-        'pos_title_ids': pos_title_ids,
-        'pos_pop': pos_pop,
-        'pos_age': pos_age,
+        'hist_mask':      hist_mask,
+        'hist_pop':       hist_pop,
+        'hist_age':       hist_age,
+        'pos_title_ids':  pos_title_ids,
+        'pos_pop':        pos_pop,
+        'pos_age':        pos_age,
     }
+
 
 
 # ------------------------------
@@ -603,7 +641,7 @@ def train(args):
 
     ds_train = MindTrainDataset(train_beh, news2title, pop_value_fn, news_first_ts,
                                 max_hist_len=args.max_hist_len, max_title_len=args.max_title_len)
-    dl_train = DataLoader(ds_train, batch_size=args.batch_size, shuffle=True, num_workers=4,
+    dl_train = DataLoader(ds_train, batch_size=args.batch_size, shuffle=True, num_workers=0,
                           collate_fn=collate_train, pin_memory=True)
 
     model = TinyNewsRec(vocab_size=len(stoi), pad_idx=PAD_IDX, d_item=args.d_model).to(device)
@@ -631,6 +669,13 @@ def train(args):
             h_items = model.encode_items(hist_title_ids.view(B*T, L)).view(B, T, -1)
             user_vec = model.encode_users(h_items, hist_mask, hist_age, hist_pop)
             pos_item_vec = model.encode_items(pos_title_ids, pos_pop, pos_age)
+            # --- DEBUG: logits stats + diag advantage ---
+            with torch.no_grad():
+                logits_dbg = (user_vec @ pos_item_vec.t()) / args.temperature
+                diag = logits_dbg.diag().mean().item()
+                off = (logits_dbg.sum() - logits_dbg.diag().sum()) / (logits_dbg.numel() - logits_dbg.size(0))
+                if step % args.log_every == 0:
+                    print(f"[dbg] logits mean diag={diag:.3f} off={off:.3f}  loss~{np.mean(losses[-args.log_every:]):.3f}")
 
             loss = model.info_nce_loss(user_vec, pos_item_vec, temperature=args.temperature)
 
@@ -672,7 +717,7 @@ if __name__ == "__main__":
     p.add_argument('--workdir', type=str, default='./runs/mind_local', help='Where to save checkpoints and logs')
     p.add_argument('--epochs', type=int, default=1)
     p.add_argument('--batch_size', type=int, default=256)
-    p.add_argument('--lr', type=float, default=2e-3)
+    p.add_argument('--lr', type=float, default=1e-3)
     p.add_argument('--d_model', type=int, default=128)
     p.add_argument('--max_title_len', type=int, default=20)
     p.add_argument('--max_hist_len', type=int, default=50)
