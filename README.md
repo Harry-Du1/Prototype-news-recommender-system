@@ -32,11 +32,11 @@ It demonstrates an end-to-end deep-learning pipeline for personalized ranking â€
 --dev_split â€” time-aware validation ratio if no dev set exists
 
 ```python
-python trainer.py \
-  --data_path PATH/TO/DATASET \
-  --batch_size 256 \
-  --max_title_len 20 \
-  --max_hist_len 50 \
+python trainer.py 
+  --data_path PATH/TO/DATASET 
+  --batch_size 256 
+  --max_title_len 20 
+  --max_hist_len 50 
   --dev_split 0.1
 
 ```
