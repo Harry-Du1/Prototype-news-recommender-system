@@ -21,6 +21,8 @@ It demonstrates an end-to-end deep-learning pipeline for personalized ranking �
 - GPU preferred.
 
 ## Usage:
+--data_path - path to the downloaded MIND dataset.
+
 --batch_size — mini-batch size (e.g., 128–512)
 
 --max_title_len — tokens per title (padding/cropping)
@@ -35,5 +37,15 @@ python trainer.py \
   --max_title_len 20 \
   --max_hist_len 50 \
   --dev_split 0.1
-```python
+
+```
+## Result:
+Epoch 1 Step 200/11895  loss=0.89
+Epoch 1 finished in 745.2s  avg_loss=0.92
+Dev metrics: {'AUC': 0.67, 'MRR': 0.28, 'nDCG@5': 0.31, 'nDCG@10': 0.35}
+Saved best checkpoint.
+
+After this you should have an ensemble created in your working directory. 
+
+
 
