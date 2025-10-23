@@ -40,13 +40,12 @@ python trainer.py
 
 ```
 ## Result:
+```result
 Epoch 1 Step 200/11895  loss=6.89
-
 Epoch 1 finished in 745.2s  avg_loss=6.92
-
 Dev metrics: {'AUC': 0.67, 'MRR': 0.28, 'nDCG@5': 0.31, 'nDCG@10': 0.35}
-
 Saved best checkpoint.
+```
 
 After this you should have an ensemble created in your working directory. 
 
