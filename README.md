@@ -6,11 +6,10 @@ It demonstrates an end-to-end deep-learning pipeline for personalized ranking â€
 ---
 
 ## âœ¨ Features
-- Trains on the **MIND** news click dataset (small or large)
+- Trains on the **MIND** news click dataset
 - **User click-history modeling** with padding + masks
-- Robust to **cold-start users** (empty histories)
+- Robust to **cold-start users**
 - **Negative sampling** for implicit-feedback training
-- Clean **PyTorch** implementation (CPU / macOS MPS compatible)
 - Time-aware **dev split** if no validation set is provided
 
 ---
